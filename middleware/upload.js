@@ -5,11 +5,21 @@ const storage = multer.memoryStorage();
 
 // Filtre : accepter uniquement les images
 function fileFilter(req, file, cb) {
-  const typesAutorises = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+  const typesAutorises = [
+    'image/jpeg',
+    'image/png',
+    'image/gif',
+    'image/webp',
+    'image/avif',
+    'image/bmp',
+    'image/tiff',
+    'image/heic',
+    'image/heif',
+  ];
   if (typesAutorises.includes(file.mimetype)) {
     cb(null, true);
   } else {
-    cb(new Error('Type de fichier non autorisé. Formats acceptés : jpeg, jpg, png, gif, webp.'), false);
+    cb(new Error('Type de fichier non autorisé. Formats acceptés : JPEG, PNG, GIF, WebP, AVIF, BMP, TIFF, HEIC et HEIF.'), false);
   }
 }
 
@@ -17,7 +27,7 @@ const upload = multer({
   storage,
   fileFilter,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5 MB
+    fileSize: 5 * 1024 * 1024,
   },
 });
 

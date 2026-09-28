@@ -3,6 +3,7 @@ const router = express.Router();
 
 const {
   creerDemande,
+  modifierDemande,
   getToutesLesDemandes,
   getDemandeParId,
   getMesDemandes,
@@ -27,6 +28,14 @@ router.post(
   verifyRole("demandeur", "super-admin"),
   upload.single("photoBonDeSang"),
   creerDemande
+);
+
+router.put(
+  "/:id",
+  auth,
+  verifyRole("demandeur"),
+  upload.single("photoBonDeSang"),
+  modifierDemande
 );
 
 // Voir ses propres demandes
@@ -85,6 +94,7 @@ router.patch(
 router.get(
   "/:id",
   auth,
+  verifyRole("demandeur", "admin", "super-admin"),
   getDemandeParId
 );
 
@@ -92,6 +102,7 @@ router.get(
 router.delete(
   "/:id",
   auth,
+  verifyRole("demandeur", "admin", "super-admin"),
   supprimerDemande
 );
 

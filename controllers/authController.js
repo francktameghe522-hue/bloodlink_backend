@@ -1,10 +1,22 @@
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const User = require("../models/utilisateur");
+const User = require("../models/Utilisateur");
 const { verifierEtReactiverDonneur } = require("../utils/eligibilite");
+const { sendEmailSafely } = require("./emailController");
+const donneurBienvenue = require("../emails/donneurBienvenue");
+const demandeurBienvenue = require("../emails/demandeurBienvenue");
 
-// Clé secrète utilisée pour signer les tokens JWT
-const JWT_SECRET = process.env.JWT_SECRET || "secret123";
+function createToken(user, expiresIn) {
+  if (!process.env.JWT_SECRET) {
+    throw new Error("JWT_SECRET manquant");
+  }
+
+  return jwt.sign(
+    { id: user._id, role: user.role, telephone: user.telephone },
+    process.env.JWT_SECRET,
+    { expiresIn }
+  );
+}
 
 /**
  * =========================================================
@@ -32,6 +44,12 @@ async function register(req, res) {
     if (!nom || !email || !password) {
       return res.status(400).json({
         message: "Nom, email et mot de passe requis",
+      });
+    }
+
+    if (password.length < 8) {
+      return res.status(400).json({
+        message: "Le mot de passe doit contenir au moins 8 caractères",
       });
     }
 
@@ -73,23 +91,23 @@ async function register(req, res) {
 
     await user.save();
 
+    try {
+      const appUrl = (process.env.APP_URL || "http://localhost:5174").replace(/\/$/, "");
+      const welcomeEmail = user.role === "donneur"
+        ? donneurBienvenue({ user, appUrl })
+        : demandeurBienvenue({ user, appUrl });
+      await sendEmailSafely({ to: user.email, ...welcomeEmail });
+    } catch (emailError) {
+      console.error("Erreur lors de la preparation de l'email de bienvenue :", emailError);
+    }
+
     console.log("✅ Utilisateur créé :", {
       email: user.email,
       role: user.role,
     });
 
     // Création du token JWT
-    const token = jwt.sign(
-      {
-        id: user._id,
-        role: user.role,
-        telephone: user.telephone,
-      },
-      JWT_SECRET,
-      {
-        expiresIn: "30d",
-      }
-    );
+    const token = createToken(user, "1h");
 
     return res.status(201).json({
       message: "Utilisateur créé",
@@ -103,6 +121,7 @@ async function register(req, res) {
         role: user.role,
         telephone: user.telephone,
         groupeSanguin: user.groupeSanguin,
+        photoProfil: user.photoProfil,
         actif: user.actif,
       },
     });
@@ -125,12 +144,6 @@ async function login(req, res) {
   try {
     const { email, password } = req.body;
 
-    console.log("====================================");
-    console.log("🔐 TENTATIVE DE CONNEXION");
-    console.log("====================================");
-    console.log("📧 Email reçu :", email);
-    console.log("🔑 Mot de passe reçu :", password ? "OUI" : "NON");
-
     // Vérification des champs
     if (!email || !password) {
       return res.status(400).json({
@@ -141,24 +154,13 @@ async function login(req, res) {
     // Normaliser l'email
     const emailNormalise = email.toLowerCase().trim();
 
-    console.log("🔎 Email recherché :", emailNormalise);
-
     // Rechercher l'utilisateur
     const user = await User.findOne({
       email: emailNormalise,
     });
 
-    console.log(
-      "👤 Utilisateur trouvé :",
-      user
-        ? `${user.email} | rôle=${user.role}`
-        : "AUCUN"
-    );
-
     // Utilisateur inexistant
     if (!user) {
-      console.log("❌ Aucun utilisateur avec cet email");
-
       return res.status(401).json({
         message: "Email incorrect",
       });
@@ -166,8 +168,6 @@ async function login(req, res) {
 
     // Vérifier si le compte est actif
     if (user.actif === false) {
-      console.log("🚫 Compte désactivé :", user.email);
-
       return res.status(403).json({
         message:
           "Votre compte a été désactivé. Veuillez contacter l'administrateur.",
@@ -176,8 +176,6 @@ async function login(req, res) {
 
     // Vérifier que le mot de passe existe
     if (!user.password) {
-      console.log("❌ Aucun mot de passe enregistré pour :", user.email);
-
       return res.status(500).json({
         message: "Le compte utilisateur ne possède pas de mot de passe valide.",
       });
@@ -189,21 +187,14 @@ async function login(req, res) {
       user.password
     );
 
-    console.log(
-      "🔑 Mot de passe correspondant :",
-      isMatch ? "OUI" : "NON"
-    );
-
     if (!isMatch) {
-      console.log("❌ Mot de passe incorrect");
-
       return res.status(401).json({
         message: "Mot de passe incorrect",
       });
     }
 
     // -------------------------------------------------
-    // Si c'est un donneur, vérifier si les 3 mois sont
+    // Si c'est un donneur, verifier si les 30 jours sont
     // écoulés depuis son dernier don → réactivation auto
     // -------------------------------------------------
     if (user.role === "donneur") {
@@ -216,24 +207,12 @@ async function login(req, res) {
     }
 
     // Créer le token JWT
-    const token = jwt.sign(
-      {
-        id: user._id,
-        role: user.role,
-        telephone: user.telephone,
-      },
-      JWT_SECRET,
-      {
-        expiresIn: "1h",
-      }
-    );
+    const token = createToken(user, "1h");
 
     console.log("✅ Connexion réussie :", {
       email: user.email,
       role: user.role,
     });
-
-    console.log("====================================");
 
     return res.status(200).json({
       message: "Connexion réussie",
@@ -247,6 +226,7 @@ async function login(req, res) {
         role: user.role,
         telephone: user.telephone,
         groupeSanguin: user.groupeSanguin,
+        photoProfil: user.photoProfil,
         actif: user.actif,
       },
     });

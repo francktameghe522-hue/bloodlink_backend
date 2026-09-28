@@ -1,10 +1,15 @@
 const express = require("express");
 const dotenv = require("dotenv");
+const path = require("path");
 const bodyParser = require("body-parser");
 const cookieParser = require("cookie-parser");
 const cors = require("cors");
 
-dotenv.config();
+dotenv.config({ path: path.join(__dirname, ".env") });
+
+if (!process.env.JWT_SECRET) {
+  throw new Error("JWT_SECRET doit être défini dans l'environnement.");
+}
 
 const dbConnect = require("./config/dbConnect");
 
@@ -18,18 +23,32 @@ const adminRoutes = require("./routes/adminroutes");
 const app = express();
 
 const PORT = Number(process.env.PORT) || 5002;
+const allowedOrigins = (
+  process.env.CORS_ORIGIN ||
+  "http://localhost:5173,http://localhost:5174,http://localhost:5171,http://localhost:5172,http://localhost:5171"
+)
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 app.disable("x-powered-by");
 
 app.use(
   cors({
-    origin: "*",
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("Origine non autorisée par CORS"));
+    },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
-  })
+  }),
 );
 
-app.use(express.json());
+app.use(express.json({ limit: "1mb" }));
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(bodyParser.json());
@@ -46,6 +65,18 @@ app.use("/api/demandes", demandeRoutes);
 app.use("/api/dons", donRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/admin", adminRoutes);
+
+app.use((err, _req, res, next) => {
+  if (err.name === "MulterError" && err.code === "LIMIT_FILE_SIZE") {
+    return res.status(400).json({ message: "L'image ne doit pas dépasser 5 Mo." });
+  }
+
+  if (err.message?.startsWith("Type de fichier non autorisé")) {
+    return res.status(400).json({ message: err.message });
+  }
+
+  return next(err);
+});
 
 // ==============================
 // TEST DU SERVEUR
@@ -73,10 +104,7 @@ dbConnect()
     });
   })
   .catch((err) => {
-    console.error(
-      "Échec de connexion à la base de données",
-      err
-    );
+    console.error("Échec de connexion à la base de données", err);
 
     process.exit(1);
   });

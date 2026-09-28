@@ -122,6 +122,12 @@ const demandeSchema = new mongoose.Schema(
       default: "en attente",
     },
 
+    // Date a laquelle la demande est devenue une alerte donneur.
+    dateAlerte: {
+      type: Date,
+      default: null,
+    },
+
     // Liste des donneurs ayant répondu
     donneursRepondu: {
       type: [reponseDonneurSchema],

@@ -16,8 +16,8 @@ const donneurSchema = new mongoose.Schema({
 donneurSchema.virtual("estEligible").get(function () {
   if (!this.dateDernierDon) return true;
 
-  const troisMois = 90 * 24 * 60 * 60 * 1000;
-  return Date.now() - this.dateDernierDon.getTime() >= troisMois;
+  const delaiEligibilite = 30 * 24 * 60 * 60 * 1000;
+  return Date.now() - this.dateDernierDon.getTime() >= delaiEligibilite;
 });
 
 module.exports = mongoose.model("Donneur", donneurSchema);

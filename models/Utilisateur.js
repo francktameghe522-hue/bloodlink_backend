@@ -82,7 +82,7 @@ const UserSchema = new mongoose.Schema(
     },
 
     // Date du dernier don confirmé par l'admin
-    // Sert à calculer l'éligibilité (délai de 3 mois)
+    // Sert à calculer l'éligibilité (délai de 30 jours)
     dateDernierDon: {
       type: Date,
       default: null,
@@ -90,6 +90,11 @@ const UserSchema = new mongoose.Schema(
 
     // Photo de profil (URL Cloudinary)
     photoProfil: {
+      type: String,
+      default: null,
+    },
+
+    photoProfilPublicId: {
       type: String,
       default: null,
     },

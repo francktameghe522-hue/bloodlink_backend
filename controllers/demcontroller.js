@@ -1,22 +1,17 @@
 const Demande = require("../models/demande");
 const Notification = require("../models/notification");
-const User = require("../models/utilisateur");
-const cloudinary = require("cloudinary").v2;
-const streamifier = require("streamifier");
+const User = require("../models/Utilisateur");
+const { uploadImage } = require("../utils/imageStorage");
+const { notifySafely, notifyUsersSafely } = require("../utils/notifications");
+const { verifierEtReactiverDonneur, DELAI_ELIGIBILITE_MS } = require("../utils/eligibilite");
+const { sendEmailSafely } = require("./emailController");
+const demandeurDemandeCreee = require("../emails/demandeurDemandeCreee");
+const adminNouvelleDemande = require("../emails/adminNouvelleDemande");
+const donneurNouvelleDemande = require("../emails/donneurNouvelleDemande");
 
 /* =========================================================
    HELPER : UPLOAD VERS CLOUDINARY
 ========================================================= */
-
-function uploadVersCloudinary(buffer, options) {
-  return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(options, (error, result) => {
-      if (error) reject(error);
-      else resolve(result);
-    });
-    streamifier.createReadStream(buffer).pipe(stream);
-  });
-}
 
 /* =========================================================
    CALCUL DU NOMBRE DE DONNEURS
@@ -53,11 +48,8 @@ async function creerDemande(req, res) {
     let photoBonDeSang = photoBonDeSangBody || null;
 
     if (req.file) {
-      const result = await uploadVersCloudinary(req.file.buffer, {
-        folder: "bloodlink/bons-de-sang",
-        resource_type: "image",
-      });
-      photoBonDeSang = result.secure_url;
+      const result = await uploadImage(req.file, "bloodlink/bons-de-sang");
+      photoBonDeSang = result.url;
     }
 
     if (
@@ -130,6 +122,48 @@ async function creerDemande(req, res) {
 
     await demande.save();
 
+    try {
+      const admins = await User.find({ role: { $in: ["admin", "super-admin"] }, actif: true }).select("_id");
+      await Promise.all([
+        notifySafely({
+          userId: demande.utilisateurId,
+          type: "demande_creee",
+          title: "Demande enregistree",
+          message: "Votre demande a ete enregistree et attend sa validation.",
+          data: { demandeId: demande._id, url: `/demandeur/demandes/${demande._id}` },
+        }),
+        notifyUsersSafely(admins.map((admin) => admin._id), {
+          type: "demande_creee",
+          title: "Nouvelle demande a traiter",
+          message: `La demande ${demande.idDemande} attend une validation.`,
+          data: { demandeId: demande._id, url: "/admin/demandes" },
+        }),
+      ]);
+    } catch (notificationError) {
+      console.error("Erreur lors de la creation des notifications :", notificationError);
+    }
+
+    try {
+      const appUrl = (process.env.APP_URL || "http://localhost:5174").replace(/\/$/, "");
+      const [demandeur, admins] = await Promise.all([
+        User.findById(demande.utilisateurId).select("email"),
+        User.find({ role: { $in: ["admin", "super-admin"] }, actif: true }).select("email"),
+      ]);
+
+      await Promise.all([
+        demandeur?.email && sendEmailSafely({
+          to: demandeur.email,
+          ...demandeurDemandeCreee({ demande, appUrl }),
+        }),
+        ...admins.filter((admin) => admin.email).map((admin) => sendEmailSafely({
+          to: admin.email,
+          ...adminNouvelleDemande({ demande, appUrl }),
+        })),
+      ]);
+    } catch (emailError) {
+      console.error("Erreur lors de la preparation des emails :", emailError);
+    }
+
     return res.status(201).json({
       message: "Demande créée avec succès",
       demande,
@@ -144,6 +178,47 @@ async function creerDemande(req, res) {
   }
 }
 
+async function modifierDemande(req, res) {
+  try {
+    const demande = await Demande.findById(req.params.id);
+    if (!demande) return res.status(404).json({ message: "Demande non trouvée" });
+    if (demande.utilisateurId.toString() !== req.user.id) {
+      return res.status(403).json({ message: "Vous n'êtes pas autorisé à modifier cette demande." });
+    }
+    if (demande.status !== "en attente") {
+      return res.status(409).json({ message: "Seules les demandes en attente peuvent être modifiées." });
+    }
+
+    const { nomPatient, numeroBonDeSang, quantite, groupeSanguinPatient, nombreDePocheDeSang } = req.body;
+    const nombrePoches = Number(nombreDePocheDeSang);
+    const quantiteFinale = Number(quantite || nombrePoches);
+    const groupes = ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"];
+
+    if (!nomPatient?.trim() || !numeroBonDeSang?.trim() || !groupes.includes(groupeSanguinPatient) || !Number.isInteger(nombrePoches) || nombrePoches < 1 || !Number.isInteger(quantiteFinale) || quantiteFinale < 1) {
+      return res.status(400).json({ message: "Les informations de la demande sont invalides." });
+    }
+
+    demande.nomPatient = nomPatient.trim();
+    demande.numeroBonDeSang = numeroBonDeSang.trim();
+    demande.quantite = quantiteFinale;
+    demande.nombreDePocheDeSang = nombrePoches;
+    demande.nombreDeDonneur = calculerNombreDeDonneur(nombrePoches);
+    demande.groupeSanguinPatient = groupeSanguinPatient;
+
+    if (req.file) {
+      const result = await uploadImage(req.file, "bloodlink/bons-de-sang");
+      demande.photoBonDeSang = result.url;
+    }
+
+    await demande.save();
+
+    return res.status(200).json({ message: "Demande modifiée avec succès", demande });
+  } catch (error) {
+    console.error("Erreur modifierDemande :", error);
+    return res.status(500).json({ message: "Erreur serveur" });
+  }
+}
+
 /* =========================================================
    RECUPERER TOUTES LES DEMANDES
 ========================================================= */
@@ -153,11 +228,11 @@ async function getToutesLesDemandes(req, res) {
     const demandes = await Demande.find()
       .populate(
         "utilisateurId",
-        "nom prenom email telephone role"
+        "nom prenom email telephone role photoProfil"
       )
       .populate(
         "donneursRepondu.donneurId",
-        "nom prenom telephone email"
+        "nom prenom telephone email photoProfil"
       )
       .sort({ dateCreation: -1 });
 
@@ -192,12 +267,22 @@ async function getDemandeParId(req, res) {
       )
       .populate(
         "donneursRepondu.donneurId",
-        "nom prenom telephone email"
+        "nom prenom telephone email groupeSanguin photoProfil"
       );
 
     if (!demande) {
       return res.status(404).json({
         message: "Demande non trouvée",
+      });
+    }
+
+    const demandeurId = demande.utilisateurId._id || demande.utilisateurId;
+    const isOwner = demandeurId.toString() === req.user.id;
+    const isAdministrator = ["admin", "super-admin"].includes(req.user.role);
+
+    if (!isOwner && !isAdministrator) {
+      return res.status(403).json({
+        message: "Vous n'êtes pas autorisé à consulter cette demande.",
       });
     }
 
@@ -228,7 +313,7 @@ async function getMesDemandes(req, res) {
     })
       .populate(
         "donneursRepondu.donneurId",
-        "nom prenom telephone email"
+        "nom prenom telephone email photoProfil"
       )
       .sort({
         dateCreation: -1,
@@ -373,7 +458,48 @@ async function mettreAJourStatut(req, res) {
 
     demande.status = statutFinal;
 
+    if (statutFinal === "acceptée" && ancienStatut !== "acceptée") {
+      demande.dateAlerte = new Date();
+    }
+
     await demande.save();
+
+    if (ancienStatut !== statutFinal) {
+      const statusMessages = {
+        "acceptée": "Votre demande a ete validee. Les donneurs eligibles sont alertes.",
+        "refusée": "Votre demande a ete refusee. Contactez l'administration pour plus d'informations.",
+        "bloquée": "Votre demande est satisfaite et a ete cloturee.",
+      };
+      await notifySafely({
+        userId: demande.utilisateurId,
+        type: `demande_${statutFinal}`,
+        title: "Mise a jour de votre demande",
+        message: statusMessages[statutFinal] || "Le statut de votre demande a ete mis a jour.",
+        data: { demandeId: demande._id, url: `/demandeur/demandes/${demande._id}` },
+      });
+
+      try {
+        const admins = await User.find({
+          _id: { $ne: demande.utilisateurId },
+          role: { $in: ["admin", "super-admin"] },
+          actif: true,
+        }).select("_id email");
+        const statusLabel = statutFinal === "acceptée"
+          ? "acceptee"
+          : statutFinal === "refusée"
+            ? "refusee"
+            : "cloturee";
+
+        await notifyUsersSafely(admins.map((admin) => admin._id), {
+          type: `demande_${statutFinal}`,
+          title: "Statut de demande mis a jour",
+          message: `La demande ${demande.idDemande} a ete ${statusLabel}.`,
+          data: { demandeId: demande._id, url: "/admin/demandes" },
+        });
+      } catch (notificationError) {
+        console.error("Erreur lors de la creation des notifications admin :", notificationError);
+      }
+    }
 
     console.log(
       "Statut enregistré dans MongoDB :",
@@ -398,10 +524,9 @@ async function mettreAJourStatut(req, res) {
         // On n'alerte que les donneurs éligibles :
         // - rôle donneur
         // - actif
-        // - dateDernierDon null (jamais donné)
-        //   OU dateDernierDon >= 90 jours (délai écoulé)
-        const TROIS_MOIS_MS = 90 * 24 * 60 * 60 * 1000;
-        const dateSeuilEligibilite = new Date(Date.now() - TROIS_MOIS_MS);
+        // - dateDernierDon null (jamais donne)
+        //   OU dernier don effectue depuis au moins 30 jours
+        const dateSeuilEligibilite = new Date(Date.now() - DELAI_ELIGIBILITE_MS);
 
         const donneurs = await User.find({
           role: "donneur",
@@ -410,7 +535,7 @@ async function mettreAJourStatut(req, res) {
             { dateDernierDon: null },
             { dateDernierDon: { $lte: dateSeuilEligibilite } },
           ],
-        }).select("_id");
+        }).select("_id email");
 
         console.log(
           "Nombre de donneurs trouvés :",
@@ -448,6 +573,16 @@ async function mettreAJourStatut(req, res) {
 
           await Notification.insertMany(
             notifications
+          );
+
+          const appUrl = (process.env.APP_URL || "http://localhost:5174").replace(/\/$/, "");
+          await Promise.all(
+            donneurs.filter((donneur) => donneur.email).map((donneur) =>
+              sendEmailSafely({
+                to: donneur.email,
+                ...donneurNouvelleDemande({ demande, appUrl }),
+              })
+            )
           );
 
           console.log(
@@ -584,11 +719,7 @@ async function supprimerDemande(req, res) {
       });
     }
 
-    if (
-      req.user.role === "demandeur" &&
-      demande.utilisateurId.toString() !==
-        req.user.id
-    ) {
+    if (req.user.role === "demandeur" && demande.utilisateurId.toString() !== req.user.id) {
       return res.status(403).json({
         message:
           "Vous n'êtes pas autorisé à supprimer cette demande.",
@@ -629,9 +760,30 @@ async function supprimerDemande(req, res) {
 
 async function getDemandesDisponibles(req, res) {
   try {
-    const demandes = await Demande.find({
+    const eligibilite = await verifierEtReactiverDonneur(req.user.id);
+
+    const demandesRepondues = { "donneursRepondu.donneurId": req.user.id };
+    const nouvellesAlertes = {
       status: "acceptée",
       bloque: false,
+      ...(eligibilite.eligible
+        ? (eligibilite.dateEligibilite
+          ? {
+              $or: [
+                { dateAlerte: { $gte: eligibilite.dateEligibilite } },
+                // Les demandes historiques n'ont pas dateAlerte : updatedAt
+                // est leur meilleure approximation de date d'alerte.
+                { dateAlerte: null, updatedAt: { $gte: eligibilite.dateEligibilite } },
+              ],
+            }
+          : {})
+        : { _id: null }),
+    };
+
+    const demandes = await Demande.find({
+      // Une demande deja repondue reste toujours visible dans
+      // l'historique du donneur, quel que soit son statut actuel.
+      $or: [demandesRepondues, nouvellesAlertes],
     })
       .populate(
         "utilisateurId",
@@ -642,7 +794,13 @@ async function getDemandesDisponibles(req, res) {
       });
 
     return res.status(200).json({
-      demandes,
+      eligibilite,
+      demandes: demandes.map((demande) => ({
+        ...demande.toObject(),
+        aDejaRepondu: demande.donneursRepondu.some((reponse) =>
+          reponse.donneurId.equals(req.user.id)
+        ),
+      })),
     });
   } catch (error) {
     console.error(
@@ -764,6 +922,7 @@ async function repondreADemande(req, res) {
 
 module.exports = {
   creerDemande,
+  modifierDemande,
   getToutesLesDemandes,
   getDemandeParId,
   getMesDemandes,

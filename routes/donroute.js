@@ -11,7 +11,10 @@ const {
   adminEnregistrerDonneur,
   annulerReponse,
   getAllDons,
+  getMesDons,
 } = require("../controllers/donController");
+
+router.get("/mes-dons", auth, verifyRole("donneur"), getMesDons);
 
 // ==========================================
 // ADMIN / SUPER-ADMIN : liste des dons
@@ -30,6 +33,7 @@ router.get(
 router.post(
   "/repondre/:demandeId",
   auth,
+  verifyRole("donneur"),
   repondreDemande
 );
 
@@ -39,6 +43,7 @@ router.post(
 router.delete(
   "/repondre/:demandeId",
   auth,
+  verifyRole("donneur"),
   annulerReponse
 );
 
@@ -48,6 +53,7 @@ router.delete(
 router.get(
   "/reponses/:demandeId",
   auth,
+  verifyRole("demandeur", "admin", "super-admin"),
   getDonneursRepondu
 );
 

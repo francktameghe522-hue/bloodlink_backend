@@ -1,43 +1,39 @@
 const User = require("../models/Utilisateur");
 
-const TROIS_MOIS_MS = 90 * 24 * 60 * 60 * 1000;
+const DELAI_ELIGIBILITE_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
- * Vérifie si le délai de 3 mois est écoulé depuis le dernier don.
- * Si oui, remet automatiquement dateDernierDon à null sur le compte
- * du donneur (il redevient éligible sans intervention manuelle).
+ * Vérifie si le délai de 30 jours est écoulé depuis le dernier don.
+ * La date du dernier don est conservée pour filtrer les alertes créées
+ * pendant la période d'indisponibilité.
  *
  * @param {string|ObjectId} donneurId  - L'ID de l'utilisateur donneur
- * @returns {Promise<{ eligible: boolean, joursRestants: number, dateEligibilite: Date|null }>}
+ * @returns {Promise<{ eligible: boolean, joursRestants: number, dateEligibilite: Date|null, dateDernierDon: Date|null }>}
  */
 async function verifierEtReactiverDonneur(donneurId) {
   const donneur = await User.findById(donneurId).select("dateDernierDon role");
 
   // Pas un donneur ou pas de don enregistré → éligible
   if (!donneur || !donneur.dateDernierDon) {
-    return { eligible: true, joursRestants: 0, dateEligibilite: null };
+    return { eligible: true, joursRestants: 0, dateEligibilite: null, dateDernierDon: null };
   }
 
   const ecoulé = Date.now() - new Date(donneur.dateDernierDon).getTime();
 
-  if (ecoulé >= TROIS_MOIS_MS) {
-    // Les 3 mois sont passés → on remet dateDernierDon à null
-    // pour signifier qu'il est à nouveau disponible
-    await User.findByIdAndUpdate(donneurId, { dateDernierDon: null });
+  const dateEligibilite = new Date(
+    new Date(donneur.dateDernierDon).getTime() + DELAI_ELIGIBILITE_MS
+  );
 
-    return { eligible: true, joursRestants: 0, dateEligibilite: null };
+  if (ecoulé >= DELAI_ELIGIBILITE_MS) {
+    return { eligible: true, joursRestants: 0, dateEligibilite, dateDernierDon: donneur.dateDernierDon };
   }
 
   // Encore dans la période d'indisponibilité
   const joursRestants = Math.ceil(
-    (TROIS_MOIS_MS - ecoulé) / (24 * 60 * 60 * 1000)
+    (DELAI_ELIGIBILITE_MS - ecoulé) / (24 * 60 * 60 * 1000)
   );
 
-  const dateEligibilite = new Date(
-    new Date(donneur.dateDernierDon).getTime() + TROIS_MOIS_MS
-  );
-
-  return { eligible: false, joursRestants, dateEligibilite };
+  return { eligible: false, joursRestants, dateEligibilite, dateDernierDon: donneur.dateDernierDon };
 }
 
-module.exports = { verifierEtReactiverDonneur, TROIS_MOIS_MS };
+module.exports = { verifierEtReactiverDonneur, DELAI_ELIGIBILITE_MS };

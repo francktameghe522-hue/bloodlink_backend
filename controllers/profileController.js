@@ -1,26 +1,10 @@
 const User = require('../models/Utilisateur');
-const cloudinary = require('cloudinary').v2;
-const streamifier = require('streamifier');
-
-const TROIS_MOIS_MS = 90 * 24 * 60 * 60 * 1000;
-
-/* =========================================================
-   HELPER : UPLOAD VERS CLOUDINARY
-========================================================= */
-
-function uploadVersCloudinary(buffer, options) {
-  return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(options, (error, result) => {
-      if (error) reject(error);
-      else resolve(result);
-    });
-    streamifier.createReadStream(buffer).pipe(stream);
-  });
-}
+const { deleteImage, uploadImage } = require('../utils/imageStorage');
+const { DELAI_ELIGIBILITE_MS } = require('../utils/eligibilite');
 
 async function getProfile(req, res) {
   try {
-    const user = await User.findById(req.user.id).select('-password');
+    const user = await User.findById(req.user.id).select('-password -photoProfilPublicId');
     if (!user) return res.status(404).json({ message: 'Utilisateur non trouvé' });
 
     // -------------------------------------------------
@@ -39,14 +23,14 @@ async function getProfile(req, res) {
         };
       } else {
         const dateEligibilite = new Date(
-          new Date(user.dateDernierDon).getTime() + TROIS_MOIS_MS
+          new Date(user.dateDernierDon).getTime() + DELAI_ELIGIBILITE_MS
         );
         const maintenant = Date.now();
         const ecoulé = maintenant - new Date(user.dateDernierDon).getTime();
-        const eligible = ecoulé >= TROIS_MOIS_MS;
+        const eligible = ecoulé >= DELAI_ELIGIBILITE_MS;
         const joursRestants = eligible
           ? 0
-          : Math.ceil((TROIS_MOIS_MS - ecoulé) / (24 * 60 * 60 * 1000));
+          : Math.ceil((DELAI_ELIGIBILITE_MS - ecoulé) / (24 * 60 * 60 * 1000));
 
         eligibilite = {
           eligible,
@@ -67,7 +51,7 @@ async function getProfile(req, res) {
 async function updateProfile(req, res) {
   try {
     const updates = (({ nom, prenom, telephone, gender }) => ({ nom, prenom, telephone, gender }))(req.body);
-    const user = await User.findByIdAndUpdate(req.user.id, updates, { new: true }).select('-password');
+    const user = await User.findByIdAndUpdate(req.user.id, updates, { new: true }).select('-password -photoProfilPublicId');
     if (!user) return res.status(404).json({ message: 'Utilisateur non trouvé' });
     res.status(200).json({ user });
   } catch (err) {
@@ -86,23 +70,22 @@ async function uploadPhotoProfil(req, res) {
       return res.status(400).json({ message: 'Aucun fichier fourni.' });
     }
 
-    const result = await uploadVersCloudinary(req.file.buffer, {
-      folder: 'bloodlink/profils',
-      resource_type: 'image',
-    });
+    const result = await uploadImage(req.file, 'bloodlink/profils');
+    const previousUser = await User.findById(req.user.id).select('photoProfil photoProfilPublicId');
+    await deleteImage(previousUser?.photoProfil, previousUser?.photoProfilPublicId);
 
     const user = await User.findByIdAndUpdate(
       req.user.id,
-      { photoProfil: result.secure_url },
+      { photoProfil: result.url, photoProfilPublicId: result.publicId },
       { new: true }
-    ).select('-password');
+    ).select('-password -photoProfilPublicId');
 
     if (!user) return res.status(404).json({ message: 'Utilisateur non trouvé' });
 
     return res.status(200).json({ user });
   } catch (err) {
     console.error('Erreur uploadPhotoProfil :', err);
-    return res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    return res.status(500).json({ message: 'Erreur serveur' });
   }
 }
 
@@ -112,18 +95,21 @@ async function uploadPhotoProfil(req, res) {
 
 async function supprimerPhotoProfil(req, res) {
   try {
+    const previousUser = await User.findById(req.user.id).select('photoProfil photoProfilPublicId');
+    await deleteImage(previousUser?.photoProfil, previousUser?.photoProfilPublicId);
+
     const user = await User.findByIdAndUpdate(
       req.user.id,
-      { photoProfil: null },
+      { photoProfil: null, photoProfilPublicId: null },
       { new: true }
-    ).select('-password');
+    ).select('-password -photoProfilPublicId');
 
     if (!user) return res.status(404).json({ message: 'Utilisateur non trouvé' });
 
     return res.status(200).json({ user });
   } catch (err) {
     console.error('Erreur supprimerPhotoProfil :', err);
-    return res.status(500).json({ message: 'Erreur serveur', error: err.message });
+    return res.status(500).json({ message: 'Erreur serveur' });
   }
 }
 
