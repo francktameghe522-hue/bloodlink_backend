@@ -9,7 +9,7 @@ const donSchema = new mongoose.Schema(
     },
     donneurId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
+      ref: "Utilisateur",
       required: true,
     },
     groupeSanguin: {

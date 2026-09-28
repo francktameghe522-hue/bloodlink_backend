@@ -1,25 +1,59 @@
 const express = require("express");
 const router = express.Router();
+
 const auth = require("../middleware/auth");
 const verifyRole = require("../middleware/role");
+
 const {
   repondreDemande,
   getDonneursRepondu,
   adminConfirmerDon,
   adminEnregistrerDonneur,
   annulerReponse,
+  getAllDons,
 } = require("../controllers/donController");
 
-// Donneur répond (se rend disponible)
-router.post("/repondre/:demandeId", auth, repondreDemande);
+// ==========================================
+// ADMIN / SUPER-ADMIN : liste des dons
+// GET /api/dons
+// ==========================================
+router.get(
+  "/",
+  auth,
+  verifyRole("admin", "super-admin"),
+  getAllDons
+);
 
-// Annuler sa réponse
-router.delete("/repondre/:demandeId", auth, annulerReponse);
+// ==========================================
+// DONNEUR : répondre à une demande
+// ==========================================
+router.post(
+  "/repondre/:demandeId",
+  auth,
+  repondreDemande
+);
 
-// Lister les réponses pour une demande (demandeur ou admin)
-router.get("/reponses/:demandeId", auth, getDonneursRepondu);
+// ==========================================
+// DONNEUR : annuler sa réponse
+// ==========================================
+router.delete(
+  "/repondre/:demandeId",
+  auth,
+  annulerReponse
+);
 
-// Admin confirme qu'un don a été effectué par un donneur (valide le don)
+// ==========================================
+// DEMANDEUR / ADMIN : voir les réponses
+// ==========================================
+router.get(
+  "/reponses/:demandeId",
+  auth,
+  getDonneursRepondu
+);
+
+// ==========================================
+// ADMIN / SUPER-ADMIN : confirmer un don
+// ==========================================
 router.patch(
   "/admin/confirmer/:demandeId/:donneurId",
   auth,
@@ -27,7 +61,9 @@ router.patch(
   adminConfirmerDon
 );
 
-// Admin enregistre un donneur dans la plateforme
+// ==========================================
+// ADMIN / SUPER-ADMIN : enregistrer un donneur
+// ==========================================
 router.post(
   "/admin/enregistrer-donneur",
   auth,

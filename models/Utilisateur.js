@@ -1,39 +1,104 @@
-const mongoose = require("mongoose")
+const mongoose = require("mongoose");
 
-const UserSchema = new mongoose.Schema({
-    nom: String,
-    email: {
-        type: String,
-        unique: true,
+const UserSchema = new mongoose.Schema(
+  {
+    // Nom
+    nom: {
+      type: String,
+      required: true,
+      trim: true,
     },
 
+    // Prénom
     prenom: {
-        type: String,
+      type: String,
+      trim: true,
     },
 
+    // Email
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
+
+    // Rôle
     role: {
-        type: String,
-        enum: ["demandeur", "donneur", "admin", "super-admin"],
-
+      type: String,
+      enum: [
+        "demandeur",
+        "donneur",
+        "admin",
+        "super-admin",
+      ],
+      default: "demandeur",
     },
 
-    telephone: String,
+    // Téléphone
+    telephone: {
+      type: String,
+      trim: true,
+    },
 
+    // Mot de passe
+    password: {
+      type: String,
+      required: true,
+    },
 
-    password: String,
-
+    // Groupe sanguin
     groupeSanguin: {
-        type: String,
-        enum: ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-"],
-        default: null,
+      type: String,
+      enum: [
+        "A+",
+        "A-",
+        "B+",
+        "B-",
+        "AB+",
+        "AB-",
+        "O+",
+        "O-",
+      ],
+      default: null,
     },
 
+    // Sexe
     gender: {
-        type: String,
-        enum: ["male", "female", "others"],
-        default: "male",
+      type: String,
+      enum: [
+        "male",
+        "female",
+        "others",
+      ],
+      default: "male",
     },
 
+    // Statut du compte
+    actif: {
+      type: Boolean,
+      default: true,
+    },
 
-})
-module.exports = mongoose.model("User", UserSchema);
+    // Date du dernier don confirmé par l'admin
+    // Sert à calculer l'éligibilité (délai de 3 mois)
+    dateDernierDon: {
+      type: Date,
+      default: null,
+    },
+
+    // Photo de profil (URL Cloudinary)
+    photoProfil: {
+      type: String,
+      default: null,
+    },
+  },
+  {
+    timestamps: true,
+  }
+);
+
+module.exports =
+  mongoose.models.Utilisateur ||
+  mongoose.model("Utilisateur", UserSchema);
