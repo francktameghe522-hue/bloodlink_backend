@@ -4,6 +4,9 @@ const Demande = require("../models/demande");
 const Don = require("../models/don");
 const Notification = require("../models/notification");
 const { notifySafely } = require("../utils/notifications");
+const { sendEmailSafely } = require("./emailController");
+const compteActivee = require("../emails/compteActivee");
+const compteDesactive = require("../emails/compteDesactive");
 
 const roles = ["demandeur", "donneur", "admin", "super-admin"];
 const publicUser = (user) => ({ id: user._id, nom: user.nom, prenom: user.prenom, email: user.email, telephone: user.telephone, role: user.role, gender: user.gender, groupeSanguin: user.groupeSanguin, actif: user.actif });
@@ -46,7 +49,28 @@ async function toggleUserStatus(req, res) {
     if (!user) return res.status(404).json({ message: "Utilisateur introuvable" });
     user.actif = user.actif === false;
     await user.save();
-    await notifySafely({ userId: user._id, type: user.actif ? "compte_active" : "compte_desactive", title: user.actif ? "Compte active" : "Compte desactive", message: user.actif ? "Votre compte BloodLink a ete active." : "Votre compte BloodLink a ete desactive.", data: {} });
+    
+    // Créer la notification
+    await notifySafely({ 
+      userId: user._id, 
+      type: user.actif ? "compte_active" : "compte_desactive", 
+      title: user.actif ? "Compte active" : "Compte desactive", 
+      message: user.actif ? "Votre compte BloodLink a ete active." : "Votre compte BloodLink a ete desactive.", 
+      data: {} 
+    });
+    
+    // Envoyer l'email
+    try {
+      const appUrl = (process.env.APP_URL || "http://localhost:5174").replace(/\/$/, "");
+      const emailTemplate = user.actif ? compteActivee : compteDesactive;
+      await sendEmailSafely({
+        to: user.email,
+        ...emailTemplate({ user, appUrl }),
+      });
+    } catch (emailError) {
+      console.error("Erreur lors de l'envoi de l'email de modification du compte :", emailError);
+    }
+    
     return res.json({ message: user.actif ? "Compte activé avec succès" : "Compte désactivé avec succès", actif: user.actif });
   } catch (error) {
     return res.status(500).json({ message: "Erreur serveur" });

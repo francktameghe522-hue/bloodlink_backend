@@ -1,6 +1,6 @@
 const User = require("../models/Utilisateur");
 
-const DELAI_ELIGIBILITE_MS = 30 * 24 * 60 * 60 * 1000;
+const DELAI_ELIGIBILITE_MS = 90 * 24 * 60 * 60 * 1000;
 
 /**
  * Vérifie si le délai de 30 jours est écoulé depuis le dernier don.

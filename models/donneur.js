@@ -16,7 +16,7 @@ const donneurSchema = new mongoose.Schema({
 donneurSchema.virtual("estEligible").get(function () {
   if (!this.dateDernierDon) return true;
 
-  const delaiEligibilite = 30 * 24 * 60 * 60 * 1000;
+  const delaiEligibilite = 90 * 24 * 60 * 60 * 1000;
   return Date.now() - this.dateDernierDon.getTime() >= delaiEligibilite;
 });
 
